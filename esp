@@ -1,1 +1,305 @@
-nơi đặt các logic esp player và esp item
+-- ======================================================================
+-- PHẦN ESP MODULE (PASTE TRỰC TIẾP VÀO FILE ESP BÊN NGOÀI CỦA MÀY)
+-- ======================================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local localPlayer = Players.LocalPlayer
+
+_G.HubState = _G.HubState or {}
+_G.HubLogic = _G.HubLogic or {}
+
+local espObjects = {
+    players = {},
+    items = {}
+}
+
+-- ----------------------------------------------------------------------
+-- 1. LOGIC ESP PLAYER
+-- ----------------------------------------------------------------------
+local function getPlayerColor(player)
+    if _G.HubState.avoidTargets and _G.HubState.avoidTargets[player] then
+        return Color3.fromRGB(255, 165, 0) -- Màu Cam (Avoid Target)
+    end
+    if _G.HubState.pinnedPlayers and _G.HubState.pinnedPlayers[player] then
+        return Color3.fromRGB(255, 0, 0) -- Màu Đỏ (Target)
+    end
+    if _G.HubState.espPlayerTeamCheck and player.Team and localPlayer.Team then
+        if player.Team == localPlayer.Team then
+            return Color3.fromRGB(0, 255, 0) -- Màu Xanh Lá (Cùng đội)
+        else
+            return Color3.fromRGB(255, 50, 50) -- Màu Đỏ (Khác đội)
+        end
+    end
+    return Color3.fromRGB(255, 255, 255) -- Mặc định Trắng
+end
+
+local function removePlayerEsp(player)
+    if espObjects.players[player] then
+        if espObjects.players[player].highlight then
+            pcall(function() espObjects.players[player].highlight:Destroy() end)
+        end
+        if espObjects.players[player].billboard then
+            pcall(function() espObjects.players[player].billboard:Destroy() end)
+        end
+        espObjects.players[player] = nil
+    end
+end
+
+local function createPlayerEsp(player)
+    if player == localPlayer then return end
+    removePlayerEsp(player)
+
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+    if not hrp then return end
+
+    local color = getPlayerColor(player)
+
+    -- Highlight phát sáng
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "PlayerEspHighlight"
+    highlight.Adornee = char
+    highlight.FillColor = color
+    highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.Enabled = _G.HubState.espPlayerGlow and _G.HubState.espPlayerEnabled
+    highlight.Parent = char
+
+    -- BillboardGui thẻ tên + khoảng cách
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "PlayerEspTag"
+    billboard.Adornee = hrp
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Enabled = _G.HubState.espPlayerEnabled and (_G.HubState.espPlayerNameTag or _G.HubState.espPlayerDistance)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = color
+    label.TextStrokeTransparency = 0
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.Font = Enum.Font.SourceSansBold
+    label.TextSize = 14
+    label.Parent = billboard
+    billboard.Parent = hrp
+
+    espObjects.players[player] = {
+        highlight = highlight,
+        billboard = billboard,
+        label = label
+    }
+end
+
+-- Vòng lặp RenderStepped cập nhật vị trí/khoảng cách Player
+RunService.RenderStepped:Connect(function()
+    if not _G.HubState.espPlayerEnabled then return end
+
+    local myChar = localPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+    for player, data in pairs(espObjects.players) do
+        if player and player.Parent and player.Character then
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local dist = myHRP and math.floor((hrp.Position - myHRP.Position).Magnitude) or 0
+                local nameStr = player.DisplayName
+                if player.Name ~= player.DisplayName then
+                    nameStr = player.DisplayName .. " (@" .. player.Name .. ")"
+                end
+
+                local text = ""
+                if _G.HubState.espPlayerNameTag and _G.HubState.espPlayerDistance then
+                    text = nameStr .. "\n[" .. tostring(dist) .. "m]"
+                elseif _G.HubState.espPlayerNameTag then
+                    text = nameStr
+                elseif _G.HubState.espPlayerDistance then
+                    text = "[" .. tostring(dist) .. "m]"
+                end
+
+                data.label.Text = text
+                data.label.TextColor3 = getPlayerColor(player)
+                if data.highlight then data.highlight.FillColor = getPlayerColor(player) end
+            end
+        else
+            removePlayerEsp(player)
+        end
+    end
+end)
+
+-- ----------------------------------------------------------------------
+-- 2. LOGIC ESP ITEM
+-- ----------------------------------------------------------------------
+local function getItemContainer()
+    local pathStr = _G.HubState.espItemSourcePath
+    if pathStr and pathStr ~= "" then
+        local current = game
+        for segment in string.gmatch(pathStr, "[^%.]+") do
+            current = current:FindFirstChild(segment)
+            if not current then break end
+        end
+        if current then return current end
+    end
+    return Workspace
+end
+
+local function removeItemEsp(item)
+    if espObjects.items[item] then
+        if espObjects.items[item].highlight then
+            pcall(function() espObjects.items[item].highlight:Destroy() end)
+        end
+        if espObjects.items[item].billboard then
+            pcall(function() espObjects.items[item].billboard:Destroy() end)
+        end
+        espObjects.items[item] = nil
+    end
+end
+
+local function createItemEsp(item)
+    removeItemEsp(item)
+
+    if not (item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model")) then return end
+    local targetPart = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart")
+    if not targetPart then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ItemEspHighlight"
+    highlight.Adornee = item
+    highlight.FillColor = Color3.fromRGB(255, 255, 0)
+    highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
+    highlight.FillTransparency = 0.4
+    highlight.Enabled = _G.HubState.espItemsGlow and _G.HubState.espItemsEnabled
+    highlight.Parent = item
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "ItemEspTag"
+    billboard.Adornee = targetPart
+    billboard.Size = UDim2.new(0, 150, 0, 30)
+    billboard.StudsOffset = Vector3.new(0, 2, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Enabled = _G.HubState.espItemsName and _G.HubState.espItemsEnabled
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(255, 255, 0)
+    label.TextStrokeTransparency = 0
+    label.Font = Enum.Font.SourceSansBold
+    label.TextSize = 13
+    label.Text = item.Name
+    label.Parent = billboard
+    billboard.Parent = targetPart
+
+    espObjects.items[item] = {
+        highlight = highlight,
+        billboard = billboard
+    }
+end
+
+local function scanAndApplyItems()
+    for item, _ in pairs(espObjects.items) do
+        removeItemEsp(item)
+    end
+    if not _G.HubState.espItemsEnabled then return end
+
+    local container = getItemContainer()
+    for _, obj in ipairs(container:GetChildren()) do
+        createItemEsp(obj)
+    end
+end
+
+-- ----------------------------------------------------------------------
+-- 3. ĐIỀU KHIỂN BẬT TẮT ĐƯỢC GỌI TỪ GUI
+-- ----------------------------------------------------------------------
+_G.HubLogic.ToggleEspPlayer = function(enabled)
+    _G.HubState.espPlayerEnabled = enabled
+    if enabled then
+        for _, p in ipairs(Players:GetPlayers()) do
+            createPlayerEsp(p)
+        end
+    else
+        for p, _ in pairs(espObjects.players) do
+            removePlayerEsp(p)
+        end
+    end
+end
+
+_G.HubLogic.UpdateEspPlayerTag = function(enabled)
+    _G.HubState.espPlayerNameTag = enabled
+    for _, data in pairs(espObjects.players) do
+        if data.billboard then
+            data.billboard.Enabled = _G.HubState.espPlayerEnabled and (_G.HubState.espPlayerNameTag or _G.HubState.espPlayerDistance)
+        end
+    end
+end
+
+_G.HubLogic.UpdateEspPlayerGlow = function(enabled)
+    _G.HubState.espPlayerGlow = enabled
+    for _, data in pairs(espObjects.players) do
+        if data.highlight then
+            data.highlight.Enabled = enabled and _G.HubState.espPlayerEnabled
+        end
+    end
+end
+
+_G.HubLogic.UpdateEspPlayerDistance = function(enabled)
+    _G.HubState.espPlayerDistance = enabled
+    for _, data in pairs(espObjects.players) do
+        if data.billboard then
+            data.billboard.Enabled = _G.HubState.espPlayerEnabled and (_G.HubState.espPlayerNameTag or _G.HubState.espPlayerDistance)
+        end
+    end
+end
+
+_G.HubLogic.UpdateEspPlayerTeamCheck = function(enabled)
+    _G.HubState.espPlayerTeamCheck = enabled
+end
+
+_G.HubLogic.SetEspItemsActive = function(enabled)
+    _G.HubState.espItemsEnabled = enabled
+    scanAndApplyItems()
+end
+
+_G.HubLogic.UpdateEspItemsGlow = function(enabled)
+    _G.HubState.espItemsGlow = enabled
+    for _, data in pairs(espObjects.items) do
+        if data.highlight then data.highlight.Enabled = enabled and _G.HubState.espItemsEnabled end
+    end
+end
+
+_G.HubLogic.UpdateEspItemsName = function(enabled)
+    _G.HubState.espItemsName = enabled
+    for _, data in pairs(espObjects.items) do
+        if data.billboard then data.billboard.Enabled = enabled and _G.HubState.espItemsEnabled end
+    end
+end
+
+_G.HubLogic.SetEspItemSource = function(pathText)
+    _G.HubState.espItemSourcePath = pathText
+    scanAndApplyItems()
+end
+
+_G.HubLogic.ClearAllEsp = function()
+    for p, _ in pairs(espObjects.players) do removePlayerEsp(p) end
+    for i, _ in pairs(espObjects.items) do removeItemEsp(i) end
+end
+
+-- Tự nhận diện người chơi mới
+Players.PlayerAdded:Connect(function(p)
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        if _G.HubState.espPlayerEnabled then createPlayerEsp(p) end
+    end)
+end)
+
+for _, p in ipairs(Players:GetPlayers()) do
+    p.CharacterAdded:Connect(function()
+        task.wait(1)
+        if _G.HubState.espPlayerEnabled then createPlayerEsp(p) end
+    end)
+end
