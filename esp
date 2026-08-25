@@ -16,23 +16,30 @@ local espObjects = {
 }
 
 -- ----------------------------------------------------------------------
--- 1. LOGIC ESP PLAYER
+-- 1. LOGIC ESP PLAYER & FRIEND CHECK
 -- ----------------------------------------------------------------------
 local function getPlayerColor(player)
     if _G.HubState.avoidTargets and _G.HubState.avoidTargets[player] then
-        return Color3.fromRGB(255, 165, 0) -- Màu Cam (Avoid Target)
+        return Color3.fromRGB(255, 140, 0) -- Màu Cam Đậm (Avoid Target)
     end
     if _G.HubState.pinnedPlayers and _G.HubState.pinnedPlayers[player] then
-        return Color3.fromRGB(255, 0, 0) -- Màu Đỏ (Target)
+        return Color3.fromRGB(255, 0, 50) -- Màu Đỏ Nổi (Target)
+    end
+    -- Bổ sung 3: Kiểm tra bạn bè
+    if localPlayer:IsFriendsWith(player.UserId) then
+        return Color3.fromRGB(0, 230, 255) -- Màu Xanh Lam Sáng (Bạn bè)
     end
     if _G.HubState.espPlayerTeamCheck and player.Team and localPlayer.Team then
         if player.Team == localPlayer.Team then
-            return Color3.fromRGB(0, 255, 0) -- Màu Xanh Lá (Cùng đội)
+            return Color3.fromRGB(0, 255, 127) -- Màu Xanh Lá Rõ (Cùng đội)
         else
-            return Color3.fromRGB(255, 50, 50) -- Màu Đỏ (Khác đội)
+            return Color3.fromRGB(255, 30, 30) -- Màu Đỏ Tươi (Khác đội)
         end
     end
-    return Color3.fromRGB(255, 255, 255) -- Mặc định Trắng
+    
+    -- Chỉnh sửa màu sắc theo yêu cầu
+    -- Tím đậm nét hơn, Trắng rõ ràng sắc nét khi lại gần
+    return Color3.fromRGB(255, 255, 255) -- Mặc định Trắng Sáng
 end
 
 local function removePlayerEsp(player)
@@ -58,23 +65,23 @@ local function createPlayerEsp(player)
 
     local color = getPlayerColor(player)
 
-    -- Highlight phát sáng
+    -- Highlight phát sáng nét và dễ nhìn hơn
     local highlight = Instance.new("Highlight")
     highlight.Name = "PlayerEspHighlight"
     highlight.Adornee = char
     highlight.FillColor = color
-    highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
-    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = Color3.fromRGB(15, 15, 15) -- Outline Đen Rõ Nét
+    highlight.FillTransparency = 0.35 -- Giảm độ trong suốt để màu đậm rõ hơn
     highlight.OutlineTransparency = 0
     highlight.Enabled = _G.HubState.espPlayerGlow and _G.HubState.espPlayerEnabled
     highlight.Parent = char
 
-    -- BillboardGui thẻ tên + khoảng cách
+    -- BillboardGui thẻ tên + khoảng cách (Nâng độ cao hơn một chút lên 4.5 studs để dễ nhìn khi lại gần)
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "PlayerEspTag"
     billboard.Adornee = hrp
     billboard.Size = UDim2.new(0, 200, 0, 50)
-    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.StudsOffset = Vector3.new(0, 4.5, 0) -- Chỉnh sửa: Nâng thẻ tên cao hơn một chút
     billboard.AlwaysOnTop = true
     billboard.Enabled = _G.HubState.espPlayerEnabled and (_G.HubState.espPlayerNameTag or _G.HubState.espPlayerDistance)
 
@@ -85,7 +92,7 @@ local function createPlayerEsp(player)
     label.TextStrokeTransparency = 0
     label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
     label.Font = Enum.Font.SourceSansBold
-    label.TextSize = 14
+    label.TextSize = 15 -- Tăng nhẹ font chữ
     label.Parent = billboard
     billboard.Parent = hrp
 
@@ -123,8 +130,9 @@ RunService.RenderStepped:Connect(function()
                 end
 
                 data.label.Text = text
-                data.label.TextColor3 = getPlayerColor(player)
-                if data.highlight then data.highlight.FillColor = getPlayerColor(player) end
+                local cColor = getPlayerColor(player)
+                data.label.TextColor3 = cColor
+                if data.highlight then data.highlight.FillColor = cColor end
             end
         else
             removePlayerEsp(player)
@@ -133,19 +141,29 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- ----------------------------------------------------------------------
--- 2. LOGIC ESP ITEM
+-- 2. LOGIC ESP ITEM (ĐÃ FIX LỖI PATH DEX EXPLORER VÀ ITEM RECOGNITION)
 -- ----------------------------------------------------------------------
 local function getItemContainer()
     local pathStr = _G.HubState.espItemSourcePath
-    if pathStr and pathStr ~= "" then
-        local current = game
-        for segment in string.gmatch(pathStr, "[^%.]+") do
-            current = current:FindFirstChild(segment)
-            if not current then break end
-        end
-        if current then return current end
+    if not pathStr or pathStr == "" or pathStr == "Workspace" or pathStr == "game.Workspace" then
+        return Workspace
     end
-    return Workspace
+
+    -- Làm sạch chuỗi từ Dex Explorer
+    pathStr = string.gsub(pathStr, '^game%.', '')
+    pathStr = string.gsub(pathStr, '^Workspace%.', 'Workspace.')
+
+    local current = game
+    for segment in string.gmatch(pathStr, "[^%.]+") do
+        if segment == "Workspace" then
+            current = Workspace
+        else
+            current = current:FindFirstChild(segment)
+        end
+        if not current then break end
+    end
+
+    return current or Workspace
 end
 
 local function removeItemEsp(item)
@@ -208,8 +226,10 @@ local function scanAndApplyItems()
     if not _G.HubState.espItemsEnabled then return end
 
     local container = getItemContainer()
-    for _, obj in ipairs(container:GetChildren()) do
-        createItemEsp(obj)
+    if container then
+        for _, obj in ipairs(container:GetChildren()) do
+            createItemEsp(obj)
+        end
     end
 end
 
