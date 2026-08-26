@@ -15,6 +15,9 @@ local espObjects = {
     items = {}
 }
 
+local itemAddedConn = nil
+local itemRemovedConn = nil
+
 -- ----------------------------------------------------------------------
 -- 1. LOGIC ESP PLAYER & FRIEND CHECK
 -- ----------------------------------------------------------------------
@@ -145,19 +148,22 @@ end)
 -- ----------------------------------------------------------------------
 local function getItemContainer()
     local pathStr = _G.HubState.espItemSourcePath
-    if not pathStr or pathStr == "" or pathStr == "Workspace" or pathStr == "game.Workspace" then
+    if not pathStr or pathStr == "" or pathStr == "Workspace" or pathStr == "workspace" or pathStr == "game.Workspace" then
         return Workspace
     end
 
     -- Làm sạch chuỗi từ Dex Explorer
     pathStr = string.gsub(pathStr, '^game%.', '')
-    pathStr = string.gsub(pathStr, '^Workspace%.', 'Workspace.')
+    pathStr = string.gsub(pathStr, '^workspace%.', '', 1)
+    pathStr = string.gsub(pathStr, '^Workspace%.', '', 1)
 
-    local current = game
+    if pathStr == "" or pathStr == "Workspace" or pathStr == "workspace" then
+        return Workspace
+    end
+
+    local current = Workspace
     for segment in string.gmatch(pathStr, "[^%.]+") do
-        if segment == "Workspace" then
-            current = Workspace
-        else
+        if segment ~= "Workspace" and segment ~= "workspace" then
             current = current:FindFirstChild(segment)
         end
         if not current then break end
@@ -182,7 +188,7 @@ local function createItemEsp(item)
     removeItemEsp(item)
 
     if not (item:IsA("Tool") or item:IsA("BasePart") or item:IsA("Model")) then return end
-    local targetPart = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart")
+    local targetPart = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart", true)
     if not targetPart then return end
 
     local highlight = Instance.new("Highlight")
@@ -220,6 +226,9 @@ local function createItemEsp(item)
 end
 
 local function scanAndApplyItems()
+    if itemAddedConn then itemAddedConn:Disconnect() itemAddedConn = nil end
+    if itemRemovedConn then itemRemovedConn:Disconnect() itemRemovedConn = nil end
+
     for item, _ in pairs(espObjects.items) do
         removeItemEsp(item)
     end
@@ -230,6 +239,17 @@ local function scanAndApplyItems()
         for _, obj in ipairs(container:GetChildren()) do
             createItemEsp(obj)
         end
+
+        itemAddedConn = container.ChildAdded:Connect(function(child)
+            task.wait(0.1)
+            if _G.HubState.espItemsEnabled then
+                createItemEsp(child)
+            end
+        end)
+
+        itemRemovedConn = container.ChildRemoved:Connect(function(child)
+            removeItemEsp(child)
+        end)
     end
 end
 
@@ -307,6 +327,8 @@ end
 _G.HubLogic.ClearAllEsp = function()
     for p, _ in pairs(espObjects.players) do removePlayerEsp(p) end
     for i, _ in pairs(espObjects.items) do removeItemEsp(i) end
+    if itemAddedConn then itemAddedConn:Disconnect() itemAddedConn = nil end
+    if itemRemovedConn then itemRemovedConn:Disconnect() itemRemovedConn = nil end
 end
 
 -- Tự nhận diện người chơi mới
