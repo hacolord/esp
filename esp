@@ -12,11 +12,14 @@ _G.HubLogic = _G.HubLogic or {}
 
 local espObjects = {
     players = {},
-    items = {}
+    items = {},
+    npcs = {}
 }
 
 local itemAddedConn = nil
 local itemRemovedConn = nil
+local npcAddedConn = nil
+local npcRemovedConn = nil
 
 -- ----------------------------------------------------------------------
 -- 1. LOGIC ESP PLAYER & FRIEND CHECK
@@ -194,7 +197,7 @@ local function createItemEsp(item)
     local highlight = Instance.new("Highlight")
     highlight.Name = "ItemEspHighlight"
     highlight.Adornee = item
-    highlight.FillColor = Color3.fromRGB(255, 255, 0)
+    highlight.FillColor = Color3.fromRGB(255, 255, 0) -- Vàng cho Item
     highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
     highlight.FillTransparency = 0.4
     highlight.Enabled = _G.HubState.espItemsGlow and _G.HubState.espItemsEnabled
@@ -249,6 +252,117 @@ local function scanAndApplyItems()
 
         itemRemovedConn = container.ChildRemoved:Connect(function(child)
             removeItemEsp(child)
+        end)
+    end
+end
+
+-- ===== [ NHÁNH ESP NPC: SỬA LỖI LOGIC & XỬ LÝ PATH DEX ] =====
+local function getNpcContainer()
+    local pathStr = _G.HubState.espNpcSourcePath
+    if not pathStr or pathStr == "" or pathStr == "Workspace" or pathStr == "workspace" or pathStr == "game.Workspace" then
+        return Workspace
+    end
+
+    -- Làm sạch chuỗi copy từ Dex Explorer
+    pathStr = string.gsub(pathStr, '^game%.', '')
+    pathStr = string.gsub(pathStr, '^workspace%.', '', 1)
+    pathStr = string.gsub(pathStr, '^Workspace%.', '', 1)
+
+    if pathStr == "" or pathStr == "Workspace" or pathStr == "workspace" then
+        return Workspace
+    end
+
+    local current = Workspace
+    for segment in string.gmatch(pathStr, "[^%.]+") do
+        if segment ~= "Workspace" and segment ~= "workspace" then
+            current = current:FindFirstChild(segment)
+        end
+        if not current then break end
+    end
+
+    return current or Workspace
+end
+
+local function removeNpcEsp(npc)
+    if espObjects.npcs[npc] then
+        if espObjects.npcs[npc].highlight then
+            pcall(function() espObjects.npcs[npc].highlight:Destroy() end)
+        end
+        if espObjects.npcs[npc].billboard then
+            pcall(function() espObjects.npcs[npc].billboard:Destroy() end)
+        end
+        espObjects.npcs[npc] = nil
+    end
+end
+
+local function createNpcEsp(npc)
+    removeNpcEsp(npc)
+
+    if not (npc:IsA("Model") or npc:IsA("BasePart")) then return end
+    local targetPart = npc:IsA("BasePart") and npc or (npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Head") or npc:FindFirstChildWhichIsA("BasePart", true))
+    if not targetPart then return end
+
+    -- NPC Highlight sử dụng MÀU ĐỎ theo đúng yêu cầu
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "NpcEspHighlight"
+    highlight.Adornee = npc
+    highlight.FillColor = Color3.fromRGB(255, 0, 0) -- Đỏ cho NPC
+    highlight.OutlineColor = Color3.fromRGB(0, 0, 0)
+    highlight.FillTransparency = 0.35
+    highlight.OutlineTransparency = 0
+    highlight.Enabled = _G.HubState.espNpcGlow and _G.HubState.espNpcEnabled
+    highlight.Parent = npc
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "NpcEspTag"
+    billboard.Adornee = targetPart
+    billboard.Size = UDim2.new(0, 150, 0, 30)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Enabled = _G.HubState.espNpcName and _G.HubState.espNpcEnabled
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(255, 0, 0)
+    label.TextStrokeTransparency = 0
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.Font = Enum.Font.SourceSansBold
+    label.TextSize = 13
+    label.Text = npc.Name
+    label.Parent = billboard
+    billboard.Parent = targetPart
+
+    espObjects.npcs[npc] = {
+        highlight = highlight,
+        billboard = billboard
+    }
+end
+
+local function scanAndApplyNpcs()
+    if npcAddedConn then npcAddedConn:Disconnect() npcAddedConn = nil end
+    if npcRemovedConn then npcRemovedConn:Disconnect() npcRemovedConn = nil end
+
+    for npc, _ in pairs(espObjects.npcs) do
+        removeNpcEsp(npc)
+    end
+    if not _G.HubState.espNpcEnabled then return end
+
+    local container = getNpcContainer()
+    if container then
+        for _, obj in ipairs(container:GetChildren()) do
+            createNpcEsp(obj)
+        end
+
+        npcAddedConn = container.ChildAdded:Connect(function(child)
+            task.wait(0.1)
+            if _G.HubState.espNpcEnabled then
+                createNpcEsp(child)
+            end
+        end)
+
+        npcRemovedConn = container.ChildRemoved:Connect(function(child)
+            removeNpcEsp(child)
         end)
     end
 end
@@ -324,11 +438,39 @@ _G.HubLogic.SetEspItemSource = function(pathText)
     scanAndApplyItems()
 end
 
+-- ===== [ HÀM ĐIỀU KHIỂN ESP NPC CHO GUI ] =====
+_G.HubLogic.SetEspNpcActive = function(enabled)
+    _G.HubState.espNpcEnabled = enabled
+    scanAndApplyNpcs()
+end
+
+_G.HubLogic.UpdateEspNpcGlow = function(enabled)
+    _G.HubState.espNpcGlow = enabled
+    for _, data in pairs(espObjects.npcs) do
+        if data.highlight then data.highlight.Enabled = enabled and _G.HubState.espNpcEnabled end
+    end
+end
+
+_G.HubLogic.UpdateEspNpcName = function(enabled)
+    _G.HubState.espNpcName = enabled
+    for _, data in pairs(espObjects.npcs) do
+        if data.billboard then data.billboard.Enabled = enabled and _G.HubState.espNpcEnabled end
+    end
+end
+
+_G.HubLogic.SetEspNpcSource = function(pathText)
+    _G.HubState.espNpcSourcePath = pathText
+    scanAndApplyNpcs()
+end
+
 _G.HubLogic.ClearAllEsp = function()
     for p, _ in pairs(espObjects.players) do removePlayerEsp(p) end
     for i, _ in pairs(espObjects.items) do removeItemEsp(i) end
+    for n, _ in pairs(espObjects.npcs) do removeNpcEsp(n) end
     if itemAddedConn then itemAddedConn:Disconnect() itemAddedConn = nil end
     if itemRemovedConn then itemRemovedConn:Disconnect() itemRemovedConn = nil end
+    if npcAddedConn then npcAddedConn:Disconnect() npcAddedConn = nil end
+    if npcRemovedConn then npcRemovedConn:Disconnect() npcRemovedConn = nil end
 end
 
 -- Tự nhận diện người chơi mới
